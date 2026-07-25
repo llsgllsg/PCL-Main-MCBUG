@@ -40,7 +40,6 @@ def get_issue_count(jql: str, project: str = "MC", max_retries=3) -> int:
             return -1
 
 def get_recently_fixed(project: str, limit=10, max_retries=3):
-
     url = "https://bugs.mojang.com/api/jql-search-post"
     jql = "resolutiondate >= -7d"
     payload = {
@@ -76,7 +75,32 @@ def get_recently_fixed(project: str, limit=10, max_retries=3):
             else:
                 if " -7d" in jql:
                     print(f"{project}: -7d 无数据，尝试 -24h")
-                    return get_recently_fixed(project, limit, days="24h")
+                    jql2 = "resolutiondate >= -24h"
+                    payload2 = payload.copy()
+                    payload2["search"] = jql2
+                    resp2 = requests.post(url, json=payload2, timeout=10)
+                    resp2.raise_for_status()
+                    data2 = resp2.json()
+                    issues2 = data2.get("issues", [])
+                    if issues2:
+                        result2 = []
+                        for issue in issues2:
+                            key = issue.get("key")
+                            fields = issue.get("fields", {})
+                            summary = fields.get("summary", "无摘要")
+                            status = fields.get("status", {}).get("name", "未知")
+                            resolutiondate = fields.get("resolutiondate", "")
+                            result2.append({
+                                "key": key,
+                                "summary": summary,
+                                "status": status,
+                                "resolutiondate": resolutiondate
+                            })
+                        if result2 and result2[0]["resolutiondate"]:
+                            result2.sort(key=lambda x: x["resolutiondate"], reverse=True)
+                        return result2
+                    else:
+                        return []
                 return []
         except Exception as e:
             print(f"请求失败 (尝试 {attempt+1}/{max_retries}): {e}")
@@ -84,12 +108,17 @@ def get_recently_fixed(project: str, limit=10, max_retries=3):
     return []
 
 def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
+    display_names = {
+        "MC": "JAVA",
+        "MCPE": "基岩版"
+    }
     groupboxes = ""
     for proj, (created, resolved) in results.items():
         c_str = str(created) if created >= 0 else "失败"
         r_str = str(resolved) if resolved >= 0 else "失败"
-        groupboxes += f'                <GroupBox Header="{proj} 新增" Content="{c_str}" />\n'
-        groupboxes += f'                <GroupBox Header="{proj} 修复" Content="{r_str}" />\n'
+        display_name = display_names.get(proj, proj)
+        groupboxes += f'                <GroupBox Header="{display_name} 新增" Content="{c_str}" />\n'
+        groupboxes += f'                <GroupBox Header="{display_name} 修复" Content="{r_str}" />\n'
 
     def build_list_items(items, max_count=10):
         if not items:
@@ -126,11 +155,11 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
 {groupboxes}
             </WrapPanel>
             <TextBlock TextWrapping="Wrap" Margin="0,15,0,0" FontSize="11" Foreground="{{DynamicResource ColorBrush5}}"
-                       Text="点击下方的刷新按钮可手动更新数据。由于 API 缓存原因，数据可能有 5-30 分钟的延迟。" />
+                       Text="点我刷新" />
         </StackPanel>
     </local:MyCard>
 
-    <local:MyCard Title="最新提交的漏洞 (Java版)" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
+    <local:MyCard Title="最新提交的Java版漏洞" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
         <StackPanel Margin="25,40,23,15">
             <local:MyHint Text="点击列表项可直接跳转到对应的漏洞页面" Theme="Blue" Margin="0,0,0,10" />
             <StackPanel>
@@ -139,7 +168,7 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
         </StackPanel>
     </local:MyCard>
 
-    <local:MyCard Title="最新提交的漏洞 (基岩版)" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
+    <local:MyCard Title="最新提交的寄样板漏洞" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
         <StackPanel Margin="25,40,23,15">
             <local:MyHint Text="点击列表项可直接跳转到对应的漏洞页面" Theme="Blue" Margin="0,0,0,10" />
             <StackPanel>
@@ -180,7 +209,6 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
     return xaml
 
 def main():
-    # 使用 UTC+8 时区
     tz_utc8 = timezone(timedelta(hours=8))
     now = datetime.now(tz_utc8).strftime("%Y-%m-%d %H:%M:%S")
     print(f"统计时间 (UTC+8): {now}\n")
@@ -196,23 +224,25 @@ def main():
         resolved = get_issue_count(resolved_jql, project=proj)
         results[proj] = (created, resolved)
 
-    print("\n正在获取最新修复的漏洞 (MC)...")
+    print("\n(MC)...")
     recent_mc = get_recently_fixed("MC", limit=10)
-    print("正在获取最新修复的漏洞 (MCPE)...")
+    print("(MCPE)...")
     recent_mcpe = get_recently_fixed("MCPE", limit=10)
 
-    print("\n=== 过去24小时统计 ===")
+    print("\n24")
     print(f"{'项目':<8} {'新增':>8} {'修复':>8}")
     print("-" * 24)
+    display_names = {"MC": "JAVA", "MCPE": "基岩版"}
     for proj, (c, r) in results.items():
         c_str = str(c) if c >= 0 else "失败"
         r_str = str(r) if r >= 0 else "失败"
-        print(f"{proj:<8} {c_str:>8} {r_str:>8}")
+        display = display_names.get(proj, proj)
+        print(f"{display:<8} {c_str:>8} {r_str:>8}")
 
-    print("\nMC")
+    print("\n=== 最新修复的漏洞 (JAVA版) ===")
     for item in recent_mc:
         print(f"{item['key']}: {item['summary']} ({item['status']})")
-    print("\nMCPE)
+    print("\n=== 最新修复的漏洞 (基岩版) ===")
     for item in recent_mcpe:
         print(f"{item['key']}: {item['summary']} ({item['status']})")
 
