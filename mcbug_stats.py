@@ -1,4 +1,3 @@
-import requests
 import time
 from datetime import datetime, timezone, timedelta
 import os
@@ -40,86 +39,72 @@ def get_issue_count(jql: str, project: str = "MC", max_retries=3) -> int:
             return -1
 
 def get_recently_fixed(project: str, limit=10, max_retries=3):
-    """
-    分页获取所有 resolutiondate >= -7d 的 issue，按 resolutiondate 降序排序，取前 limit 个。
-    """
     url = "https://bugs.mojang.com/api/jql-search-post"
     jql = "resolutiondate >= -7d"
-    page = 0
-    page_size = 50
-    all_issues = []
+    payload = {
+        "advanced": True,
+        "search": jql,
+        "maxResults": limit,
+        "project": project
+    }
 
-    while True:
-        payload = {
-            "advanced": True,
-            "search": jql,
-            "maxResults": page_size,
-            "startAt": page * page_size,
-            "project": project
-        }
+    for attempt in range(max_retries):
         try:
             resp = requests.post(url, json=payload, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             issues = data.get("issues", [])
-            if not issues:
-                break
-            all_issues.extend(issues)
-            pagination = data.get("pagination", {})
-            if not pagination.get("hasNextPage", False):
-                break
-            page += 1
+            if issues:
+                result = []
+                for issue in issues:
+                    key = issue.get("key")
+                    fields = issue.get("fields", {})
+                    summary = fields.get("summary", "无摘要")
+                    status = fields.get("status", {}).get("name", "未知")
+                    resolutiondate = fields.get("resolutiondate", "")
+                    result.append({
+                        "key": key,
+                        "summary": summary,
+                        "status": status,
+                        "resolutiondate": resolutiondate
+                    })
+                if result and result[0]["resolutiondate"]:
+                    result.sort(key=lambda x: x["resolutiondate"], reverse=True)
+                return result
+            else:
+                if " -7d" in jql:
+                    print(f"{project}: -7d 无数据，尝试 -24h")
+                    jql2 = "resolutiondate >= -24h"
+                    payload2 = payload.copy()
+                    payload2["search"] = jql2
+                    resp2 = requests.post(url, json=payload2, timeout=10)
+                    resp2.raise_for_status()
+                    data2 = resp2.json()
+                    issues2 = data2.get("issues", [])
+                    if issues2:
+                        result2 = []
+                        for issue in issues2:
+                            key = issue.get("key")
+                            fields = issue.get("fields", {})
+                            summary = fields.get("summary", "无摘要")
+                            status = fields.get("status", {}).get("name", "未知")
+                            resolutiondate = fields.get("resolutiondate", "")
+                            result2.append({
+                                "key": key,
+                                "summary": summary,
+                                "status": status,
+                                "resolutiondate": resolutiondate
+                            })
+                        if result2 and result2[0]["resolutiondate"]:
+                            result2.sort(key=lambda x: x["resolutiondate"], reverse=True)
+                        return result2
+                    else:
+                        return []
+                return []
         except Exception as e:
-            print(f"分页请求失败: {e}")
-            break
-
-    # 如果 -7d 无数据，尝试 -24h
-    if not all_issues:
-        print(f"{project}: -7d 无数据，尝试 -24h")
-        jql = "resolutiondate >= -24h"
-        page = 0
-        while True:
-            payload = {
-                "advanced": True,
-                "search": jql,
-                "maxResults": page_size,
-                "startAt": page * page_size,
-                "project": project
-            }
-            try:
-                resp = requests.post(url, json=payload, timeout=10)
-                resp.raise_for_status()
-                data = resp.json()
-                issues = data.get("issues", [])
-                if not issues:
-                    break
-                all_issues.extend(issues)
-                pagination = data.get("pagination", {})
-                if not pagination.get("hasNextPage", False):
-                    break
-                page += 1
-            except Exception as e:
-                print(f"回退分页请求失败: {e}")
-                break
-
-    if not all_issues:
-        return []
-
-    result = []
-    for issue in all_issues:
-        key = issue.get("key")
-        fields = issue.get("fields", {})
-        summary = fields.get("summary", "无摘要")
-        status = fields.get("status", {}).get("name", "未知")
-        resolutiondate = fields.get("resolutiondate", "")
-        result.append({
-            "key": key,
-            "summary": summary,
-            "status": status,
-            "resolutiondate": resolutiondate
-        })
-    result.sort(key=lambda x: x["resolutiondate"], reverse=True)
-    return result[:limit]
+            print(f"请求失败 (尝试 {attempt+1}/{max_retries}): {e}")
+            time.sleep(2)
+    return []
 
 def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
     display_names = {
@@ -238,12 +223,12 @@ def main():
         resolved = get_issue_count(resolved_jql, project=proj)
         results[proj] = (created, resolved)
 
-    print("\n正在获取最新修复的漏洞 (MC)...")
+    print("\n(MC)...")
     recent_mc = get_recently_fixed("MC", limit=10)
-    print("正在获取最新修复的漏洞 (MCPE)...")
+    print("(MCPE)...")
     recent_mcpe = get_recently_fixed("MCPE", limit=10)
 
-    print("\n=== 过去24小时统计 ===")
+    print("\n24")
     print(f"{'项目':<8} {'新增':>8} {'修复':>8}")
     print("-" * 24)
     display_names = {"MC": "JAVA", "MCPE": "基岩版"}
@@ -264,7 +249,7 @@ def main():
     filename = "MCBugStats.xaml"
     with open(filename, "w", encoding="utf-8") as f:
         f.write(xaml_content)
-    print(f"\n成功生成: {filename} (位于 {os.getcwd()})")
+    print(f"\n成功: {filename} (位于 {os.getcwd()})")
 
 if __name__ == "__main__":
     main()
