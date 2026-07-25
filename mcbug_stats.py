@@ -40,12 +40,8 @@ def get_issue_count(jql: str, project: str = "MC", max_retries=3) -> int:
             return -1
 
 def get_recent_issues(project: str, limit=10, max_retries=3):
-    """
-    获取指定项目最新提交的漏洞（按创建时间倒序），不限状态。
-    """
     url = "https://bugs.mojang.com/api/jql-search-post"
-    # 按 created 降序，不限制状态
-    jql = "ORDER BY created DESC"
+    jql = "created is not null ORDER BY created DESC"
     payload = {
         "advanced": True,
         "search": jql,
@@ -73,7 +69,6 @@ def get_recent_issues(project: str, limit=10, max_retries=3):
                         "status": status,
                         "created": created
                     })
-                # 按创建时间降序排序（API 本身已经排序，但为保险再排一次）
                 if result and result[0]["created"]:
                     result.sort(key=lambda x: x["created"], reverse=True)
                 return result
@@ -83,6 +78,17 @@ def get_recent_issues(project: str, limit=10, max_retries=3):
             print(f"请求失败 (尝试 {attempt+1}/{max_retries}): {e}")
             time.sleep(2)
     return []
+
+def build_vulnerability_listitems(items, link_prefix):
+    if not items:
+        return '<local:MyListItem Margin="-5,2,-5,8" Title="暂无数据" Info="请稍后再试" Type="TextOnly" />'
+    lines = ""
+    for item in items:
+        key = item["key"]
+        safe_summary = item["summary"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        status = item.get("status", "未知")
+        lines += f'        <local:MyListItem Margin="-5,2,-5,8" Logo="pack://application:,,,/images/Blocks/CommandBlock.png" Title="{key}" Info="{safe_summary} ({status})" Type="Clickable" EventType="打开网页" EventData="{link_prefix}{key}" />\n'
+    return lines
 
 def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
     display_names = {
@@ -97,26 +103,10 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
         groupboxes += f'                <GroupBox Header="{display_name} 新增" Content="{c_str}" />\n'
         groupboxes += f'                <GroupBox Header="{display_name} 修复" Content="{r_str}" />\n'
 
-    def build_vulnerability_cards(items, version_name):
-        if not items:
-            return f'    <local:MyCard Title="{version_name} - 暂无数据" Margin="0,0,0,10" CanSwap="True" IsSwapped="False">\n        <StackPanel Margin="25,20,23,20"><TextBlock Text="暂未获取到数据" /></StackPanel>\n    </local:MyCard>\n'
-        cards = ""
-        for item in items:
-            key = item["key"]
-            safe_summary = item["summary"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            status = item.get("status", "未知")
-            cards += f'''
-    <local:MyCard Title="{key} - {safe_summary} ({status})" Margin="0,0,0,10" CanSwap="True" IsSwapped="False">
-        <StackPanel Margin="25,20,23,20" HorizontalAlignment="Center" Orientation="Horizontal">
-            <local:MyButton Margin="0,0,10,0" Width="120" Height="30" ColorType="Highlight" Text="官方源" EventType="打开网页" EventData="https://bugs.mojang.com/browse/{key}" />
-            <local:MyButton Width="120" Height="30" Text="镜像源" EventType="打开网页" EventData="https://mojira.dev/browse/{key}" />
-        </StackPanel>
-    </local:MyCard>
-'''
-        return cards
-
-    mc_cards = build_vulnerability_cards(recent_mc, "Java版")
-    mcpe_cards = build_vulnerability_cards(recent_mcpe, "基岩版")
+    mc_official = build_vulnerability_listitems(recent_mc, "https://bugs.mojang.com/browse/")
+    mc_mirror   = build_vulnerability_listitems(recent_mc, "https://mojira.dev/browse/")
+    mcpe_official = build_vulnerability_listitems(recent_mcpe, "https://bugs.mojang.com/browse/")
+    mcpe_mirror   = build_vulnerability_listitems(recent_mcpe, "https://mojira.dev/browse/")
 
     github_logo = "M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.205 11.387.6.113.82-.26.82-.583 0-.288-.01-1.05-.015-2.06-3.338.726-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.468-2.381 1.236-3.221-.124-.3-.536-1.52.117-3.162 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.642.242 2.862.118 3.162.768.84 1.233 1.911 1.233 3.221 0 4.605-2.803 5.62-5.476 5.92.43.37.824 1.102.824 2.222 0 1.606-.015 2.898-.015 3.293 0 .322.216.698.83.578 4.765-1.588 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
 
@@ -135,22 +125,36 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
             <WrapPanel>
 {groupboxes}
             </WrapPanel>
-            <TextBlock TextWrapping="Wrap" Margin="0,15,0,0" FontSize="11" Foreground="{{DynamicResource ColorBrush5}}"
-                       Text="点我刷新" />
         </StackPanel>
     </local:MyCard>
 
     <local:MyCard Title="最新提交的Java版漏洞" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
         <StackPanel Margin="25,15,23,15">
-            <local:MyHint Text="点击下方卡片内的按钮可查看详细" Theme="Blue" Margin="0,0,0,10" />
-            {mc_cards}
+            <local:MyHint Text="点击列表项可直接跳转到对应的漏洞页面" Theme="Blue" Margin="0,0,0,10" />
+            <StackPanel>
+{mc_official}
+            </StackPanel>
+            <!-- 嵌套子卡片，显示镜像源 -->
+            <local:MyCard Title="（镜像源）" Margin="0,15,0,0" CanSwap="True" IsSwapped="True">
+                <StackPanel>
+{mc_mirror}
+                </StackPanel>
+            </local:MyCard>
         </StackPanel>
     </local:MyCard>
 
     <local:MyCard Title="最新提交的基岩版漏洞" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
         <StackPanel Margin="25,15,23,15">
-            <local:MyHint Text="点击下方卡片内的按钮可查看详细" Theme="Blue" Margin="0,0,0,10" />
-            {mcpe_cards}
+            <local:MyHint Text="点击列表项可直接跳转到对应的漏洞页面" Theme="Blue" Margin="0,0,0,10" />
+            <StackPanel>
+{mcpe_official}
+            </StackPanel>
+            <!-- 嵌套子卡片，显示镜像源 -->
+            <local:MyCard Title="（镜像源）" Margin="0,15,0,0" CanSwap="True" IsSwapped="True">
+                <StackPanel>
+{mcpe_mirror}
+                </StackPanel>
+            </local:MyCard>
         </StackPanel>
     </local:MyCard>
 
@@ -201,12 +205,12 @@ def main():
         resolved = get_issue_count(resolved_jql, project=proj)
         results[proj] = (created, resolved)
 
-    print("\n(MC)...")
+    print("\n正在获取最新提交的漏洞 (MC)...")
     recent_mc = get_recent_issues("MC", limit=10)
-    print("(MCPE)...")
+    print("正在获取最新提交的漏洞 (MCPE)...")
     recent_mcpe = get_recent_issues("MCPE", limit=10)
 
-    print("\n24")
+    print("\n=== 过去24小时统计 ===")
     print(f"{'项目':<8} {'新增':>8} {'修复':>8}")
     print("-" * 24)
     display_names = {"MC": "JAVA", "MCPE": "基岩版"}
@@ -216,10 +220,10 @@ def main():
         display = display_names.get(proj, proj)
         print(f"{display:<8} {c_str:>8} {r_str:>8}")
 
-    print("\nJAVA")
+    print("\n=== 最新提交的漏洞 (JAVA版) ===")
     for item in recent_mc:
         print(f"{item['key']}: {item['summary']} ({item['status']})")
-    print("\n基岩版")
+    print("\n=== 最新提交的漏洞 (基岩版) ===")
     for item in recent_mcpe:
         print(f"{item['key']}: {item['summary']} ({item['status']})")
 
@@ -227,7 +231,7 @@ def main():
     filename = "MCBugStats.xaml"
     with open(filename, "w", encoding="utf-8") as f:
         f.write(xaml_content)
-    print(f"\n成功: {filename} (位于 {os.getcwd()})")
+    print(f"\n成功生成: {filename} (位于 {os.getcwd()})")
 
 if __name__ == "__main__":
     main()
