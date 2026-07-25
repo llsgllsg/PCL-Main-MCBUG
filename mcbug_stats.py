@@ -79,22 +79,16 @@ def get_recent_issues(project: str, limit=10, max_retries=3):
             time.sleep(2)
     return []
 
-def build_vulnerability_groupboxes(items):
+def build_vulnerability_listitems(items, link_prefix):
     if not items:
-        return '<TextBlock Text="暂无数据" Margin="10,5" />'
-    groups = ""
+        return '<local:MyListItem Margin="-5,2,-5,8" Title="暂无数据" Info="请稍后再试" Type="TextOnly" />'
+    lines = ""
     for item in items:
         key = item["key"]
         safe_summary = item["summary"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         status = item.get("status", "未知")
-        groups += f'''
-                <GroupBox Header="{key} - {safe_summary} ({status})" Margin="5" MinWidth="200" MinHeight="40">
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                        <local:MyButton Width="120" Height="30" ColorType="Highlight" Text="官方源" EventType="打开网页" EventData="https://bugs.mojang.com/browse/{key}" />
-                    </StackPanel>
-                </GroupBox>
-'''
-    return groups
+        lines += f'        <local:MyListItem Margin="-5,2,-5,8" Logo="pack://application:,,,/images/Blocks/CommandBlock.png" Title="{key}" Info="{safe_summary} ({status})" Type="TextOnly" EventType="打开网页" EventData="{link_prefix}{key}" />\n'
+    return lines
 
 def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
     display_names = {
@@ -109,8 +103,10 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
         groupboxes += f'                <GroupBox Header="{display_name} 新增" Content="{c_str}" />\n'
         groupboxes += f'                <GroupBox Header="{display_name} 修复" Content="{r_str}" />\n'
 
-    mc_groups = build_vulnerability_groupboxes(recent_mc)
-    mcpe_groups = build_vulnerability_groupboxes(recent_mcpe)
+    mc_official = build_vulnerability_listitems(recent_mc, "https://bugs.mojang.com/browse/")
+    mc_mirror = build_vulnerability_listitems(recent_mc, "https://mojira.dev/browse/")
+    mcpe_official = build_vulnerability_listitems(recent_mcpe, "https://bugs.mojang.com/browse/")
+    mcpe_mirror = build_vulnerability_listitems(recent_mcpe, "https://mojira.dev/browse/")
 
     github_logo = "M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.205 11.387.6.113.82-.26.82-.583 0-.288-.01-1.05-.015-2.06-3.338.726-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.468-2.381 1.236-3.221-.124-.3-.536-1.52.117-3.162 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.642.242 2.862.118 3.162.768.84 1.233 1.911 1.233 3.221 0 4.605-2.803 5.62-5.476 5.92.43.37.824 1.102.824 2.222 0 1.606-.015 2.898-.015 3.293 0 .322.216.698.83.578 4.765-1.588 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
 
@@ -136,19 +132,27 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
 
     <local:MyCard Title="最新提交的Java版漏洞" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
         <StackPanel Margin="25,15,23,15">
-            <local:MyHint Text="点击下方按钮可跳转查看详情" Theme="Blue" Margin="0,0,0,10" />
-            <WrapPanel>
-{mc_groups}
-            </WrapPanel>
+            <StackPanel>
+{mc_official}
+            </StackPanel>
+            <local:MyCard Title="（镜像源）" Margin="0,10,0,0" CanSwap="True" IsSwapped="True">
+                <StackPanel>
+{mc_mirror}
+                </StackPanel>
+            </local:MyCard>
         </StackPanel>
     </local:MyCard>
 
     <local:MyCard Title="最新提交的基岩版漏洞" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
         <StackPanel Margin="25,15,23,15">
-            <local:MyHint Text="点击下方按钮可跳转查看详情" Theme="Blue" Margin="0,0,0,10" />
-            <WrapPanel>
-{mcpe_groups}
-            </WrapPanel>
+            <StackPanel>
+{mcpe_official}
+            </StackPanel>
+            <local:MyCard Title="（镜像源）" Margin="0,10,0,0" CanSwap="True" IsSwapped="True">
+                <StackPanel>
+{mcpe_mirror}
+                </StackPanel>
+            </local:MyCard>
         </StackPanel>
     </local:MyCard>
 
