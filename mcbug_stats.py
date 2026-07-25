@@ -125,8 +125,6 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
             <WrapPanel>
 {groupboxes}
             </WrapPanel>
-            <TextBlock TextWrapping="Wrap" Margin="0,15,0,0" FontSize="11" Foreground="{{DynamicResource ColorBrush5}}"
-                       Text="点我刷新" />
         </StackPanel>
     </local:MyCard>
 
@@ -135,7 +133,7 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
             <StackPanel>
 {mc_official}
             </StackPanel>
-            <local:MyCard Title="（镜像源）" Margin="0,10,0,0" CanSwap="True" IsSwapped="True">
+            <local:MyCard Title="（镜像源）" Margin="0,15,0,0" CanSwap="True" IsSwapped="True">
                 <StackPanel>
 {mc_mirror}
                 </StackPanel>
@@ -148,7 +146,7 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
             <StackPanel>
 {mcpe_official}
             </StackPanel>
-            <local:MyCard Title="（镜像源）" Margin="0,10,0,0" CanSwap="True" IsSwapped="True">
+            <local:MyCard Title="（镜像源）" Margin="0,15,0,0" CanSwap="True" IsSwapped="True">
                 <StackPanel>
 {mcpe_mirror}
                 </StackPanel>
