@@ -1,5 +1,6 @@
 import requests
 import time
+import html
 from datetime import datetime, timezone, timedelta
 import os
 
@@ -105,13 +106,16 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
         for item in items:
             if count >= max_count:
                 break
-            safe_summary = item["summary"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            status = item.get("status", "未知")
+            key = html.escape(item["key"])
+            summary = html.escape(item["summary"])
+            status = html.escape(item.get("status", "未知"))
             labels = item.get("labels", [])
             labels_str = ", ".join(labels) if labels else "无标签"
-            info_text = f"{safe_summary} ({status}) | 标签: {labels_str}"
-            info_escaped = info_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            lines += f'        <local:MyListItem Margin="-5,2,-5,8" Logo="pack://application:,,,/images/Blocks/CommandBlock.png" Title="{item["key"]}" Info="{info_escaped}" Type="Clickable" EventType="打开网页" EventData="{{variable:SourcePrefix:https://bugs.mojang.com/browse/}}{item["key"]}" />\n'
+            labels_str = html.escape(labels_str)
+            info_text = f"{summary} ({status}) | 标签: {labels_str}"
+            # 再次整体转义以防万一（但已局部转义，此处保险）
+            info_escaped = html.escape(info_text)
+            lines += f'        <local:MyListItem Margin="-5,2,-5,8" Logo="pack://application:,,,/images/Blocks/CommandBlock.png" Title="{key}" Info="{info_escaped}" Type="Clickable" EventType="打开网页" EventData="{{variable:SourcePrefix:https://bugs.mojang.com/browse/}}{key}" />\n'
             count += 1
         return lines
 
