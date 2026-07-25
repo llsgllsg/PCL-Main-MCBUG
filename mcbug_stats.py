@@ -76,7 +76,7 @@ def get_recently_fixed(project: str, limit=10, max_retries=3):
             else:
                 if " -7d" in jql:
                     print(f"{project}: -7d 无数据，尝试 -24h")
-                    return get_recently_fixed(project, limit, days="24h")  # 此参数未使用，实际修改jql
+                    return get_recently_fixed(project, limit, days="24h")
                 return []
         except Exception as e:
             print(f"请求失败 (尝试 {attempt+1}/{max_retries}): {e}")
@@ -115,12 +115,12 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
             xmlns:local="clr-namespace:PCL;assembly=Plain Craft Launcher 2">
 
     <local:MyHint 
-        Text="📊 数据来自 Mojira Public API&#x0a;统计时间：{timestamp} (UTC+8)" 
+        Text="数据来自 Mojira Public API&#x0a;统计时间：{timestamp} (UTC+8)" 
         Theme="Blue"
         Margin="0,0,0,15"
     />
 
-    <local:MyCard Title="📈 过去24小时新增与修复漏洞统计" Margin="0,0,0,15" CanSwap="True" IsSwapped="False">
+    <local:MyCard Title="过去24小时新增与修复漏洞统计" Margin="0,0,0,15" CanSwap="True" IsSwapped="False">
         <StackPanel Margin="25,40,23,15">
             <WrapPanel>
 {groupboxes}
@@ -130,7 +130,7 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
         </StackPanel>
     </local:MyCard>
 
-    <local:MyCard Title="🔄 最新提交的漏洞 (MC - Java版)" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
+    <local:MyCard Title="最新提交的漏洞 (Java版)" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
         <StackPanel Margin="25,40,23,15">
             <local:MyHint Text="点击列表项可直接跳转到对应的漏洞页面" Theme="Blue" Margin="0,0,0,10" />
             <StackPanel>
@@ -139,7 +139,7 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
         </StackPanel>
     </local:MyCard>
 
-    <local:MyCard Title="🔄 最新提交的漏洞 (MCPE - 基岩版)" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
+    <local:MyCard Title="最新提交的漏洞 (基岩版)" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
         <StackPanel Margin="25,40,23,15">
             <local:MyHint Text="点击列表项可直接跳转到对应的漏洞页面" Theme="Blue" Margin="0,0,0,10" />
             <StackPanel>
@@ -158,7 +158,7 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
                 LogoScale="0.8"
                 Theme="Color"
                 EventType="刷新主页"
-                ToolTip="手动刷新数据（由于技术限制可能存在 5-30 min 的延迟，不要频繁点击）"
+                ToolTip="数据存在部分延迟"
                 Margin="0,0,20,10"
             />
             <local:MyIconButton 
@@ -209,10 +209,10 @@ def main():
         r_str = str(r) if r >= 0 else "失败"
         print(f"{proj:<8} {c_str:>8} {r_str:>8}")
 
-    print("\n=== 最新修复的漏洞 (MC) ===")
+    print("\nMC")
     for item in recent_mc:
         print(f"{item['key']}: {item['summary']} ({item['status']})")
-    print("\n=== 最新修复的漏洞 (MCPE) ===")
+    print("\nMCPE)
     for item in recent_mcpe:
         print(f"{item['key']}: {item['summary']} ({item['status']})")
 
@@ -220,8 +220,7 @@ def main():
     filename = "MCBugStats.xaml"
     with open(filename, "w", encoding="utf-8") as f:
         f.write(xaml_content)
-    print(f"\n✅ 已生成 XAML 文件: {filename} (位于 {os.getcwd()})")
-    print("💡 使用说明：将此文件的内容替换到 PCL 主页自定义文件中即可。")
+    print(f"\n成功: {filename} (位于 {os.getcwd()})")
 
 if __name__ == "__main__":
     main()
