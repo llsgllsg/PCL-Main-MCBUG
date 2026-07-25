@@ -34,10 +34,10 @@ def get_issue_count(jql: str, project: str = "MC", max_retries=3) -> int:
                 page += 1
                 break
             except Exception as e:
-                print(f"请求失败 (尝试 {attempt+1}/{max_retries}): {e}")
+                print(f"Fu*k Mojang Potato server API (尝试 {attempt+1}/{max_retries}): {e}")
                 time.sleep(2)
         else:
-            print("重试次数用尽，放弃")
+            print("Fu*k Mojang Potato server API 用尽")
             return -1
 
 def get_recently_fixed(project: str, limit=10, max_retries=3):
@@ -95,7 +95,7 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
             c_str = str(created) if created >= 0 else "失败"
             r_str = str(resolved) if resolved >= 0 else "失败"
             boxes += f'                <GroupBox Header="{display} 新增" Content="{c_str}" />\n'
-            boxes += f'                <GroupBox Header="{display} 修复" Content="{r_str}" />\n'
+            boxes += f'                <GroupBox Header="{display} 解决" Content="{r_str}" />\n'
         return boxes
 
     def build_list_items(items, max_count=10):
@@ -136,7 +136,7 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
     <local:MyHint Text="当前数据源：官方源 (bugs.mojang.com)" Margin="0,0,0,10" Theme="Blue" Visibility="{{variable:IsOfficial:Visible}}" />
     <local:MyHint Text="当前数据源：镜像源 (mojira.dev)" Margin="0,0,0,10" Theme="Yellow" Visibility="{{variable:IsMirror:Collapsed}}" />
 
-    <local:MyCard Title="过去24小时新增与修复漏洞统计" Margin="0,0,0,15" CanSwap="True" IsSwapped="False">
+    <local:MyCard Title="过去24小时新增与解决漏洞统计" Margin="0,0,0,15" CanSwap="True" IsSwapped="False">
         <StackPanel Margin="25,40,23,15">
             <WrapPanel>
 {stat_boxes}
@@ -220,8 +220,8 @@ def main():
     print("-" * 24)
     for proj, (c, r) in results.items():
         display = "Java版" if proj == "MC" else "基岩版"
-        c_str = str(c) if c >= 0 else "失败"
-        r_str = str(r) if r >= 0 else "失败"
+        c_str = str(c) if c >= 0 else "Fu*k Mojang Potato server API"
+        r_str = str(r) if r >= 0 else "Fu*k Mojang Potato server API"
         print(f"{display:<8} {c_str:>8} {r_str:>8}")
 
     print("\n=== 最新修复的漏洞 (MC) ===")
@@ -238,7 +238,6 @@ def main():
     with open(filename, "w", encoding="utf-8") as f:
         f.write(xaml_content)
     print(f"\n已生成 XAML 文件: {filename} (位于 {os.getcwd()})")
-    print("使用说明：将此文件的内容替换到 PCL 主页自定义文件中即可。")
 
 if __name__ == "__main__":
     main()
