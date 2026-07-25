@@ -81,13 +81,13 @@ def get_recent_issues(project: str, limit=10, max_retries=3):
 
 def build_vulnerability_listitems(items, link_prefix):
     if not items:
-        return '<local:MyListItem Margin="-5,2,-5,8" Title="暂无数据" Info="请稍后再试" Type="TextOnly" />'
+        return '<local:MyListItem Margin="-5,2,-5,8" Title="暂无数据" Info="请稍后再试" />'
     lines = ""
     for item in items:
         key = item["key"]
         safe_summary = item["summary"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         status = item.get("status", "未知")
-        lines += f'        <local:MyListItem Margin="-5,2,-5,8" Logo="pack://application:,,,/images/Blocks/CommandBlock.png" Title="{key}" Info="{safe_summary} ({status})" Type="TextOnly" EventType="打开网页" EventData="{link_prefix}{key}" />\n'
+        lines += f'        <local:MyListItem Margin="-5,2,-5,8" Logo="pack://application:,,,/images/Blocks/CommandBlock.png" Title="{key}" Info="{safe_summary} ({status})" Type="Clickable" EventType="打开网页" EventData="{link_prefix}{key}" />\n'
     return lines
 
 def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
