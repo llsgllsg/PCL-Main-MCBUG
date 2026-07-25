@@ -1,5 +1,6 @@
 import requests
 import time
+import html
 from datetime import datetime, timezone, timedelta
 import os
 
@@ -41,7 +42,7 @@ def get_issue_count(jql: str, project: str = "MC", max_retries=3) -> int:
 
 def get_recently_fixed(project: str, limit=10, max_retries=3):
     url = "https://bugs.mojang.com/api/jql-search-post"
-    jql = "resolutiondate >= -7d"
+    jql = "fixVersion is not empty AND resolutiondate >= -7d"
     payload = {
         "advanced": True,
         "search": jql,
@@ -63,11 +64,13 @@ def get_recently_fixed(project: str, limit=10, max_retries=3):
                     summary = fields.get("summary", "无摘要")
                     status = fields.get("status", {}).get("name", "未知")
                     resolutiondate = fields.get("resolutiondate", "")
+                    labels = fields.get("labels", [])
                     result.append({
                         "key": key,
                         "summary": summary,
                         "status": status,
-                        "resolutiondate": resolutiondate
+                        "resolutiondate": resolutiondate,
+                        "labels": labels
                     })
                 if result and result[0]["resolutiondate"]:
                     result.sort(key=lambda x: x["resolutiondate"], reverse=True)
@@ -103,9 +106,16 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
         for item in items:
             if count >= max_count:
                 break
-            safe_summary = item["summary"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            status = item.get("status", "未知")
-            lines += f'        <local:MyListItem Margin="-5,2,-5,8" Logo="pack://application:,,,/images/Blocks/CommandBlock.png" Title="{item["key"]}" Info="{safe_summary} ({status})" Type="Clickable" EventType="打开网页" EventData="{{variable:SourcePrefix:https://bugs.mojang.com/browse/}}{item["key"]}" />\n'
+            key = html.escape(item["key"])
+            summary = html.escape(item["summary"])
+            status = html.escape(item.get("status", "未知"))
+            labels = item.get("labels", [])
+            labels_str = ", ".join(labels) if labels else "无标签"
+            labels_str = html.escape(labels_str)
+            info_text = f"{summary} ({status}) | 标签: {labels_str}"
+            # 再次整体转义以防万一（但已局部转义，此处保险）
+            info_escaped = html.escape(info_text)
+            lines += f'        <local:MyListItem Margin="-5,2,-5,8" Logo="pack://application:,,,/images/Blocks/CommandBlock.png" Title="{key}" Info="{info_escaped}" Type="Clickable" EventType="打开网页" EventData="{{variable:SourcePrefix:https://bugs.mojang.com/browse/}}{key}" />\n'
             count += 1
         return lines
 
@@ -123,8 +133,8 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
         Margin="0,0,0,15"
     />
 
-    <local:MyHint Text="当前网页打开方式：官方源 (bugs.mojang.com)" Margin="0,0,0,10" Theme="Blue" Visibility="{{variable:IsOfficial:Visible}}" />
-    <local:MyHint Text="当前网页打开方式：镜像源 (mojira.dev)" Margin="0,0,0,10" Theme="Yellow" Visibility="{{variable:IsMirror:Collapsed}}" />
+    <local:MyHint Text="当前数据源：官方源 (bugs.mojang.com)" Margin="0,0,0,10" Theme="Blue" Visibility="{{variable:IsOfficial:Visible}}" />
+    <local:MyHint Text="当前数据源：镜像源 (mojira.dev)" Margin="0,0,0,10" Theme="Yellow" Visibility="{{variable:IsMirror:Collapsed}}" />
 
     <local:MyCard Title="过去24小时新增与修复漏洞统计" Margin="0,0,0,15" CanSwap="True" IsSwapped="False">
         <StackPanel Margin="25,40,23,15">
@@ -216,10 +226,12 @@ def main():
 
     print("\n=== 最新修复的漏洞 (MC) ===")
     for item in recent_mc:
-        print(f"{item['key']}: {item['summary']} ({item['status']})")
+        labels = ", ".join(item.get("labels", [])) if item.get("labels") else "无标签"
+        print(f"{item['key']}: {item['summary']} ({item['status']}) [标签: {labels}]")
     print("\n=== 最新修复的漏洞 (MCPE) ===")
     for item in recent_mcpe:
-        print(f"{item['key']}: {item['summary']} ({item['status']})")
+        labels = ", ".join(item.get("labels", [])) if item.get("labels") else "无标签"
+        print(f"{item['key']}: {item['summary']} ({item['status']}) [标签: {labels}]")
 
     xaml_content = generate_xaml(results, recent_mc, recent_mcpe, now)
     filename = "MCBugStats.xaml"
