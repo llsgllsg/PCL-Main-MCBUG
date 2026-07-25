@@ -1,5 +1,6 @@
+import requests
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 import os
 
 def get_issue_count(jql: str, project: str = "MC", max_retries=3) -> int:
@@ -38,145 +39,35 @@ def get_issue_count(jql: str, project: str = "MC", max_retries=3) -> int:
             print("重试次数用尽，放弃")
             return -1
 
-def get_recently_fixed(project: str, limit=10, max_retries=3):
-    url = "https://bugs.mojang.com/api/jql-search-post"
-    jql = "resolutiondate >= -7d"
-    payload = {
-        "advanced": True,
-        "search": jql,
-        "maxResults": limit,
-        "project": project
-    }
-
-    for attempt in range(max_retries):
-        try:
-            resp = requests.post(url, json=payload, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            issues = data.get("issues", [])
-            if issues:
-                result = []
-                for issue in issues:
-                    key = issue.get("key")
-                    fields = issue.get("fields", {})
-                    summary = fields.get("summary", "无摘要")
-                    status = fields.get("status", {}).get("name", "未知")
-                    resolutiondate = fields.get("resolutiondate", "")
-                    result.append({
-                        "key": key,
-                        "summary": summary,
-                        "status": status,
-                        "resolutiondate": resolutiondate
-                    })
-                if result and result[0]["resolutiondate"]:
-                    result.sort(key=lambda x: x["resolutiondate"], reverse=True)
-                return result
-            else:
-                if " -7d" in jql:
-                    print(f"{project}: -7d 无数据，尝试 -24h")
-                    jql2 = "resolutiondate >= -24h"
-                    payload2 = payload.copy()
-                    payload2["search"] = jql2
-                    resp2 = requests.post(url, json=payload2, timeout=10)
-                    resp2.raise_for_status()
-                    data2 = resp2.json()
-                    issues2 = data2.get("issues", [])
-                    if issues2:
-                        result2 = []
-                        for issue in issues2:
-                            key = issue.get("key")
-                            fields = issue.get("fields", {})
-                            summary = fields.get("summary", "无摘要")
-                            status = fields.get("status", {}).get("name", "未知")
-                            resolutiondate = fields.get("resolutiondate", "")
-                            result2.append({
-                                "key": key,
-                                "summary": summary,
-                                "status": status,
-                                "resolutiondate": resolutiondate
-                            })
-                        if result2 and result2[0]["resolutiondate"]:
-                            result2.sort(key=lambda x: x["resolutiondate"], reverse=True)
-                        return result2
-                    else:
-                        return []
-                return []
-        except Exception as e:
-            print(f"请求失败 (尝试 {attempt+1}/{max_retries}): {e}")
-            time.sleep(2)
-    return []
-
-def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
-    display_names = {
-        "MC": "JAVA",
-        "MCPE": "基岩版"
-    }
+def generate_xaml(results, timestamp):
     groupboxes = ""
     for proj, (created, resolved) in results.items():
         c_str = str(created) if created >= 0 else "失败"
         r_str = str(resolved) if resolved >= 0 else "失败"
-        display_name = display_names.get(proj, proj)
-        groupboxes += f'                <GroupBox Header="{display_name} 新增" Content="{c_str}" />\n'
-        groupboxes += f'                <GroupBox Header="{display_name} 修复" Content="{r_str}" />\n'
-
-    def build_list_items(items, max_count=10):
-        if not items:
-            return f'        <local:MyListItem Margin="-5,2,-5,8" Title="暂无数据" Info="请稍后再试" Type="TextOnly" />\n'
-        lines = ""
-        count = 0
-        for item in items:
-            if count >= max_count:
-                break
-            safe_summary = item["summary"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            status = item.get("status", "未知")
-            lines += f'        <local:MyListItem Margin="-5,2,-5,8" Logo="pack://application:,,,/images/Blocks/CommandBlock.png" Title="{item["key"]}" Info="{safe_summary} ({status})" Type="Clickable" EventType="打开网页" EventData="https://bugs.mojang.com/browse/{item["key"]}" />\n'
-            count += 1
-        return lines
-
-    mc_list_items = build_list_items(recent_mc)
-    mcpe_list_items = build_list_items(recent_mcpe)
-
-    github_logo = "M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.205 11.387.6.113.82-.26.82-.583 0-.288-.01-1.05-.015-2.06-3.338.726-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.468-2.381 1.236-3.221-.124-.3-.536-1.52.117-3.162 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.642.242 2.862.118 3.162.768.84 1.233 1.911 1.233 3.221 0 4.605-2.803 5.62-5.476 5.92.43.37.824 1.102.824 2.222 0 1.606-.015 2.898-.015 3.293 0 .322.216.698.83.578 4.765-1.588 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
+        groupboxes += f'                <GroupBox Header="{proj} 新增" Content="{c_str}" />\n'
+        groupboxes += f'                <GroupBox Header="{proj} 修复" Content="{r_str}" />\n'
 
     xaml = f'''<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
             xmlns:local="clr-namespace:PCL;assembly=Plain Craft Launcher 2">
 
     <local:MyHint 
-        Text="数据来自 Mojira Public API&#x0a;统计时间：{timestamp} (UTC+8)" 
+        Text="📊 数据来自 Mojira Public API&#x0a;统计时间：{timestamp}" 
         Theme="Blue"
         Margin="0,0,0,15"
     />
 
-    <local:MyCard Title="过去24小时新增与修复漏洞统计" Margin="0,0,0,15" CanSwap="True" IsSwapped="False">
+    <local:MyCard Title="📈 过去24小时新增与修复漏洞统计" Margin="0,0,0,15" CanSwap="True" IsSwapped="False">
         <StackPanel Margin="25,40,23,15">
             <WrapPanel>
 {groupboxes}
             </WrapPanel>
             <TextBlock TextWrapping="Wrap" Margin="0,15,0,0" FontSize="11" Foreground="{{DynamicResource ColorBrush5}}"
-                       Text="点我刷新" />
+                       Text="每小时自动更新。由于 API 缓存原因，数据可能有 5-30 分钟的延迟。" />
         </StackPanel>
     </local:MyCard>
 
-    <local:MyCard Title="最新提交的Java版漏洞" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
-        <StackPanel Margin="25,40,23,15">
-            <local:MyHint Text="点击列表项可直接跳转到对应的漏洞页面" Theme="Blue" Margin="0,0,0,10" />
-            <StackPanel>
-{mc_list_items}
-            </StackPanel>
-        </StackPanel>
-    </local:MyCard>
-
-    <local:MyCard Title="最新提交的寄样板漏洞" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
-        <StackPanel Margin="25,40,23,15">
-            <local:MyHint Text="点击列表项可直接跳转到对应的漏洞页面" Theme="Blue" Margin="0,0,0,10" />
-            <StackPanel>
-{mcpe_list_items}
-            </StackPanel>
-        </StackPanel>
-    </local:MyCard>
-
-    <local:MyCard Title="⚙️ 操作" Margin="0,0,0,15" CanSwap="False">
+    <local:MyCard Title="操作" Margin="0,0,0,15" CanSwap="False">
         <StackPanel Margin="25,20,23,20" HorizontalAlignment="Center" Orientation="Horizontal">
             <local:MyIconButton 
                 Width="180" 
@@ -186,19 +77,19 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
                 LogoScale="0.8"
                 Theme="Color"
                 EventType="刷新主页"
-                ToolTip="数据存在部分延迟"
+                ToolTip="手动刷新数据"
                 Margin="0,0,20,10"
             />
             <local:MyIconButton 
                 Width="180"
                 Height="35"
                 Padding="15,0,15,0"
-                Logo="{github_logo}"
-                LogoScale="1.1"
+                Logo="M512 64c81.636 0 156.8 19.911 225.493 59.733s122.951 94.08 162.773 162.773S960 430.364 960 512s-19.911 156.8-59.733 225.493-94.08 122.951-162.773 162.773S593.636 960 512 960s-156.8-19.911-225.493-59.733-122.951-94.08-162.773-162.773S64 593.636 64 512s19.911-156.8 59.733-225.493 94.08-122.951 162.773-162.773S430.364 64 512 64z m119.467 812.373c57.742-17.92 108.516-48.782 152.32-92.587 43.804-43.805 75.164-94.578 94.08-152.32 18.916-57.742 23.396-117.476 13.44-179.2-9.956-61.724-32.853-117.476-68.693-167.253-35.84-49.778-81.138-88.604-135.893-116.48C631.964 140.658 573.724 126.72 512 126.72s-119.964 13.938-174.72 41.813-100.053 66.702-135.893 116.48-58.738 105.529-68.693 167.253c-9.956 61.724-5.476 121.458 13.44 179.2s50.276 108.516 94.08 152.32c43.804 43.804 94.578 74.667 152.32 92.587h2.987c5.973 0 10.951-1.493 14.933-4.48 3.982-2.987 5.973-7.467 5.973-13.44v-65.707l-20.907 2.987H377.6c-19.911 1.991-38.329-1.991-55.253-11.947S293.974 759.893 288 741.973l-17.92-32.853-11.947-11.947-23.893-17.92c-3.982-3.982-5.973-6.969-5.973-8.96s0.996-3.982 2.987-5.973l14.933-2.987c5.973 0 11.947 1.493 17.92 4.48 5.973 2.987 11.947 5.476 17.92 7.467l11.947 14.933 11.947 11.947c7.964 13.938 17.422 24.889 28.373 32.853 10.951 7.964 23.893 11.449 38.827 10.453 14.933-0.996 29.369-4.48 43.307-10.453 1.991-9.956 4.978-19.413 8.96-28.373 3.982-8.96 8.96-16.427 14.933-22.4-25.884-1.991-49.778-7.467-71.68-16.427-21.902-8.96-40.818-21.404-56.747-37.333-15.929-15.929-26.88-34.844-32.853-56.747-7.964-25.884-11.947-52.764-11.947-80.64 0-17.92 3.484-35.84 10.453-53.76 6.969-17.92 16.427-33.849 28.373-47.787-1.991-7.964-3.484-15.431-4.48-22.4s-1.493-14.933-1.493-23.893 0.996-17.92 2.987-26.88c1.991-8.96 3.982-18.418 5.973-28.373h8.96c7.964 0 16.427 0.996 25.387 2.987s17.422 4.978 25.387 8.96l26.88 14.933 20.907 11.947c63.716-17.92 127.431-17.92 191.147 0l20.907-11.947 26.88-14.933c7.964-3.982 15.929-6.969 23.893-8.96 7.964-1.991 16.924-2.987 26.88-2.987h5.973c3.982 9.956 6.969 19.413 8.96 28.373 1.991 8.96 2.987 17.92 2.987 26.88 0 8.96-0.498 16.924-1.493 23.893s-2.489 14.436-4.48 22.4c11.947 13.938 21.404 29.867 28.373 47.787 6.969 17.92 10.453 35.84 10.453 53.76 0 27.876-3.982 54.756-11.947 80.64-5.973 21.902-16.924 40.818-32.853 56.747-15.929 15.929-35.342 28.373-58.24 37.333-22.898 8.96-47.289 14.436-73.173 16.427 9.956 7.964 16.924 18.418 20.907 31.36 3.982 12.942 5.973 26.382 5.973 40.32v104.533c0 5.973 1.991 10.453 5.973 13.44 3.982 2.987 7.964 4.48 11.947 4.48h5.972z"
+                LogoScale="1"
                 Theme="Color"
                 EventType="打开网页"
-                EventData="https://github.com/llsgllsg/PCL-Main-MCBUG"
-                ToolTip="查看本项目的 GitHub 仓库"
+                EventData="https://bugs.mojang.com/"
+                ToolTip="访问 Mojira 官方漏洞追踪器"
                 Margin="20,0,0,10"
             />
         </StackPanel>
@@ -208,48 +99,29 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
     return xaml
 
 def main():
-    tz_utc8 = timezone(timedelta(hours=8))
-    now = datetime.now(tz_utc8).strftime("%Y-%m-%d %H:%M:%S")
-    print(f"统计时间 (UTC+8): {now}\n")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"统计时间: {now}\n")
 
     projects = ["MC", "MCPE"]
-    created_jql = "created >= -24h"
-    resolved_jql = "resolutiondate >= -24h"
-
     results = {}
     for proj in projects:
         print(f"正在统计 {proj} 项目...")
-        created = get_issue_count(created_jql, project=proj)
-        resolved = get_issue_count(resolved_jql, project=proj)
+        created = get_issue_count("created >= -24h", project=proj)
+        resolved = get_issue_count("resolutiondate >= -24h", project=proj)
         results[proj] = (created, resolved)
 
-    print("\n(MC)...")
-    recent_mc = get_recently_fixed("MC", limit=10)
-    print("(MCPE)...")
-    recent_mcpe = get_recently_fixed("MCPE", limit=10)
-
-    print("\n24")
+    print("\n=== 过去24小时统计 ===")
     print(f"{'项目':<8} {'新增':>8} {'修复':>8}")
     print("-" * 24)
-    display_names = {"MC": "JAVA", "MCPE": "基岩版"}
     for proj, (c, r) in results.items():
         c_str = str(c) if c >= 0 else "失败"
         r_str = str(r) if r >= 0 else "失败"
-        display = display_names.get(proj, proj)
-        print(f"{display:<8} {c_str:>8} {r_str:>8}")
+        print(f"{proj:<8} {c_str:>8} {r_str:>8}")
 
-    print("\n=== 最新修复的漏洞 (JAVA版) ===")
-    for item in recent_mc:
-        print(f"{item['key']}: {item['summary']} ({item['status']})")
-    print("\n=== 最新修复的漏洞 (基岩版) ===")
-    for item in recent_mcpe:
-        print(f"{item['key']}: {item['summary']} ({item['status']})")
-
-    xaml_content = generate_xaml(results, recent_mc, recent_mcpe, now)
-    filename = "MCBugStats.xaml"
-    with open(filename, "w", encoding="utf-8") as f:
+    xaml_content = generate_xaml(results, now)
+    with open("MCBugStats.xaml", "w", encoding="utf-8") as f:
         f.write(xaml_content)
-    print(f"\n成功: {filename} (位于 {os.getcwd()})")
+    print("\n成功生成 MCBugStats.xaml")
 
 if __name__ == "__main__":
     main()
