@@ -1,164 +1,9 @@
-import requests
-import time
-from datetime import datetime, timezone, timedelta
-import os
-
-def get_issue_count(jql: str, project: str = "MC", max_retries=3) -> int:
-    url = "https://bugs.mojang.com/api/jql-search-post"
-    page = 0
-    page_size = 50
-    total = 0
-
-    while True:
-        payload = {
-            "advanced": True,
-            "search": jql,
-            "maxResults": page_size,
-            "startAt": page * page_size
-        }
-        if project:
-            payload["project"] = project
-
-        for attempt in range(max_retries):
-            try:
-                resp = requests.post(url, json=payload, timeout=10)
-                resp.raise_for_status()
-                data = resp.json()
-                issues = data.get("issues", [])
-                total += len(issues)
-
-                pagination = data.get("pagination", {})
-                if not pagination.get("hasNextPage", False):
-                    return total
-                page += 1
-                break
-            except Exception as e:
-                print(f"请求失败 (尝试 {attempt+1}/{max_retries}): {e}")
-                time.sleep(2)
-        else:
-            print("重试次数用尽，放弃")
-            return -1
-
-def get_recently_fixed(project: str, limit=10, max_retries=3):
-    """
-    分页获取所有 resolutiondate >= -7d 的 issue，按 resolutiondate 降序排序，取前 limit 个。
-    """
-    url = "https://bugs.mojang.com/api/jql-search-post"
-    jql = "resolutiondate >= -7d"
-    page = 0
-    page_size = 50
-    all_issues = []
-
-    while True:
-        payload = {
-            "advanced": True,
-            "search": jql,
-            "maxResults": page_size,
-            "startAt": page * page_size,
-            "project": project
-        }
-        try:
-            resp = requests.post(url, json=payload, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            issues = data.get("issues", [])
-            if not issues:
-                break
-            all_issues.extend(issues)
-            pagination = data.get("pagination", {})
-            if not pagination.get("hasNextPage", False):
-                break
-            page += 1
-        except Exception as e:
-            print(f"分页请求失败: {e}")
-            break
-
-    # 如果 -7d 无数据，尝试 -24h
-    if not all_issues:
-        print(f"{project}: -7d 无数据，尝试 -24h")
-        jql = "resolutiondate >= -24h"
-        page = 0
-        while True:
-            payload = {
-                "advanced": True,
-                "search": jql,
-                "maxResults": page_size,
-                "startAt": page * page_size,
-                "project": project
-            }
-            try:
-                resp = requests.post(url, json=payload, timeout=10)
-                resp.raise_for_status()
-                data = resp.json()
-                issues = data.get("issues", [])
-                if not issues:
-                    break
-                all_issues.extend(issues)
-                pagination = data.get("pagination", {})
-                if not pagination.get("hasNextPage", False):
-                    break
-                page += 1
-            except Exception as e:
-                print(f"回退分页请求失败: {e}")
-                break
-
-    if not all_issues:
-        return []
-
-    result = []
-    for issue in all_issues:
-        key = issue.get("key")
-        fields = issue.get("fields", {})
-        summary = fields.get("summary", "无摘要")
-        status = fields.get("status", {}).get("name", "未知")
-        resolutiondate = fields.get("resolutiondate", "")
-        result.append({
-            "key": key,
-            "summary": summary,
-            "status": status,
-            "resolutiondate": resolutiondate
-        })
-    result.sort(key=lambda x: x["resolutiondate"], reverse=True)
-    return result[:limit]
-
-def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
-    display_names = {
-        "MC": "JAVA",
-        "MCPE": "基岩版"
-    }
-    groupboxes = ""
-    for proj, (created, resolved) in results.items():
-        c_str = str(created) if created >= 0 else "失败"
-        r_str = str(resolved) if resolved >= 0 else "失败"
-        display_name = display_names.get(proj, proj)
-        groupboxes += f'                <GroupBox Header="{display_name} 新增" Content="{c_str}" />\n'
-        groupboxes += f'                <GroupBox Header="{display_name} 修复" Content="{r_str}" />\n'
-
-    def build_list_items(items, max_count=10):
-        if not items:
-            return f'        <local:MyListItem Margin="-5,2,-5,8" Title="暂无数据" Info="请稍后再试" Type="TextOnly" />\n'
-        lines = ""
-        count = 0
-        for item in items:
-            if count >= max_count:
-                break
-            safe_summary = item["summary"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            status = item.get("status", "未知")
-            lines += f'        <local:MyListItem Margin="-5,2,-5,8" Logo="pack://application:,,,/images/Blocks/CommandBlock.png" Title="{item["key"]}" Info="{safe_summary} ({status})" Type="Clickable" EventType="打开网页" EventData="https://bugs.mojang.com/browse/{item["key"]}" />\n'
-            count += 1
-        return lines
-
-    mc_list_items = build_list_items(recent_mc)
-    mcpe_list_items = build_list_items(recent_mcpe)
-
-    github_logo = "M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.205 11.387.6.113.82-.26.82-.583 0-.288-.01-1.05-.015-2.06-3.338.726-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.468-2.381 1.236-3.221-.124-.3-.536-1.52.117-3.162 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.642.242 2.862.118 3.162.768.84 1.233 1.911 1.233 3.221 0 4.605-2.803 5.62-5.476 5.92.43.37.824 1.102.824 2.222 0 1.606-.015 2.898-.015 3.293 0 .322.216.698.83.578 4.765-1.588 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
-
-    xaml = f'''<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
             xmlns:local="clr-namespace:PCL;assembly=Plain Craft Launcher 2">
 
     <local:MyHint 
-        Text="数据来自 Mojira Public API&#x0a;统计时间：{timestamp} (UTC+8)" 
+        Text="数据来自 Mojira Public API&#x0a;统计时间：2026-07-25 09:49:38 (UTC+8)" 
         Theme="Blue"
         Margin="0,0,0,15"
     />
@@ -166,32 +11,292 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
     <local:MyCard Title="过去24小时新增与修复漏洞统计" Margin="0,0,0,15" CanSwap="True" IsSwapped="False">
         <StackPanel Margin="25,40,23,15">
             <WrapPanel>
-{groupboxes}
+                <GroupBox Header="JAVA 新增" Content="30" />
+                <GroupBox Header="JAVA 修复" Content="29" />
+                <GroupBox Header="基岩版 新增" Content="27" />
+                <GroupBox Header="基岩版 修复" Content="16" />
+
             </WrapPanel>
-            <TextBlock TextWrapping="Wrap" Margin="0,15,0,0" FontSize="11" Foreground="{{DynamicResource ColorBrush5}}"
+            <TextBlock TextWrapping="Wrap" Margin="0,15,0,0" FontSize="11" Foreground="{DynamicResource ColorBrush5}"
                        Text="点我刷新" />
         </StackPanel>
     </local:MyCard>
 
     <local:MyCard Title="最新提交的Java版漏洞" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
-        <StackPanel Margin="25,40,23,15">
-            <local:MyHint Text="点击列表项可直接跳转到对应的漏洞页面" Theme="Blue" Margin="0,0,0,10" />
-            <StackPanel>
-{mc_list_items}
-            </StackPanel>
+        <StackPanel Margin="25,15,23,15">
+            <local:MyHint Text="点击下方卡片内的按钮可查看详细" Theme="Blue" Margin="0,0,0,10" />
+            <WrapPanel>
+
+                <GroupBox Header="MC-310438 - Player can mine the block underneath a Cushion while sitting on it (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MC-310438" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310437 - Game crash upon joining (or) black screen if loading screen suceed (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MC-310437" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310436 - Player Caused Explosions Fail To Pass Attribution While Player Is Dead (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MC-310436" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310435 - Wither asymmetry (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MC-310435" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310434 - Game crashes upon startup (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MC-310434" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310433 - lost access to java but still own bedrock (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MC-310433" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310432 - ClientDisconnection-140 (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MC-310432" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310430 - discs in the inventory (Resolved)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MC-310430" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310429 - Setblock breaks datapack actions and experience if piston triggered (Resolved)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MC-310429" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310428 - can't play multi (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MC-310428" />
+                    </StackPanel>
+                </GroupBox>
+
+            </WrapPanel>
+            <!-- 嵌套子卡片，显示镜像源 -->
+            <local:MyCard Title="（镜像源）" Margin="0,15,0,0" CanSwap="True" IsSwapped="True">
+                <StackPanel>
+                    <WrapPanel>
+
+                <GroupBox Header="MC-310438 - Player can mine the block underneath a Cushion while sitting on it (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MC-310438" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310437 - Game crash upon joining (or) black screen if loading screen suceed (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MC-310437" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310436 - Player Caused Explosions Fail To Pass Attribution While Player Is Dead (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MC-310436" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310435 - Wither asymmetry (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MC-310435" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310434 - Game crashes upon startup (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MC-310434" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310433 - lost access to java but still own bedrock (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MC-310433" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310432 - ClientDisconnection-140 (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MC-310432" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310430 - discs in the inventory (Resolved)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MC-310430" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310429 - Setblock breaks datapack actions and experience if piston triggered (Resolved)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MC-310429" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MC-310428 - can't play multi (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MC-310428" />
+                    </StackPanel>
+                </GroupBox>
+
+                    </WrapPanel>
+                </StackPanel>
+            </local:MyCard>
         </StackPanel>
     </local:MyCard>
 
     <local:MyCard Title="最新提交的寄样板漏洞" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
-        <StackPanel Margin="25,40,23,15">
-            <local:MyHint Text="点击列表项可直接跳转到对应的漏洞页面" Theme="Blue" Margin="0,0,0,10" />
-            <StackPanel>
-{mcpe_list_items}
-            </StackPanel>
+        <StackPanel Margin="25,15,23,15">
+            <local:MyHint Text="点击下方卡片内的按钮可查看详细" Theme="Blue" Margin="0,0,0,10" />
+            <WrapPanel>
+
+                <GroupBox Header="MCPE-241002 - Throwing me out of realm (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MCPE-241002" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-241001 - Global Resources Reset Resources Failed to Load Previously error on ipad (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MCPE-241001" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-241000 - Inventory snap (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MCPE-241000" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-240999 - Saving my world is impossible. (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MCPE-240999" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-240998 - Being kicked off of Realms (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MCPE-240998" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-240997 - Particle Brightness Depends on Camera Angle (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MCPE-240997" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-240996 - Banner Phasing Into Floor (Resolved)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MCPE-240996" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-240995 - The coefficient reversal of instant heath and instant damage effects on undead (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MCPE-240995" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-240994 - Editing one Dressing Room character slot modifies a different custom skin slot (Bedrock v26.33) (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MCPE-240994" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-240993 - Wool double slabs have incorrect opacity (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://bugs.mojang.com/browse/MCPE-240993" />
+                    </StackPanel>
+                </GroupBox>
+
+            </WrapPanel>
+            <!-- 嵌套子卡片，显示镜像源 -->
+            <local:MyCard Title="（镜像源）" Margin="0,15,0,0" CanSwap="True" IsSwapped="True">
+                <StackPanel>
+                    <WrapPanel>
+
+                <GroupBox Header="MCPE-241002 - Throwing me out of realm (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MCPE-241002" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-241001 - Global Resources Reset Resources Failed to Load Previously error on ipad (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MCPE-241001" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-241000 - Inventory snap (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MCPE-241000" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-240999 - Saving my world is impossible. (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MCPE-240999" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-240998 - Being kicked off of Realms (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MCPE-240998" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-240997 - Particle Brightness Depends on Camera Angle (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MCPE-240997" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-240996 - Banner Phasing Into Floor (Resolved)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MCPE-240996" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-240995 - The coefficient reversal of instant heath and instant damage effects on undead (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MCPE-240995" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-240994 - Editing one Dressing Room character slot modifies a different custom skin slot (Bedrock v26.33) (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MCPE-240994" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="MCPE-240993 - Wool double slabs have incorrect opacity (Open)" Margin="5" MinWidth="200" MinHeight="40">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="https://mojira.dev/browse/MCPE-240993" />
+                    </StackPanel>
+                </GroupBox>
+
+                    </WrapPanel>
+                </StackPanel>
+            </local:MyCard>
         </StackPanel>
     </local:MyCard>
 
-    <local:MyCard Title="⚙️ 操作" Margin="0,0,0,15" CanSwap="False">
+    <local:MyCard Title="操作" Margin="0,0,0,15" CanSwap="False">
         <StackPanel Margin="25,20,23,20" HorizontalAlignment="Center" Orientation="Horizontal">
             <local:MyIconButton 
                 Width="180" 
@@ -208,7 +313,7 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
                 Width="180"
                 Height="35"
                 Padding="15,0,15,0"
-                Logo="{github_logo}"
+                Logo="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.205 11.387.6.113.82-.26.82-.583 0-.288-.01-1.05-.015-2.06-3.338.726-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.468-2.381 1.236-3.221-.124-.3-.536-1.52.117-3.162 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.642.242 2.862.118 3.162.768.84 1.233 1.911 1.233 3.221 0 4.605-2.803 5.62-5.476 5.92.43.37.824 1.102.824 2.222 0 1.606-.015 2.898-.015 3.293 0 .322.216.698.83.578 4.765-1.588 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
                 LogoScale="1.1"
                 Theme="Color"
                 EventType="打开网页"
@@ -219,52 +324,4 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
         </StackPanel>
     </local:MyCard>
 
-</StackPanel>'''
-    return xaml
-
-def main():
-    tz_utc8 = timezone(timedelta(hours=8))
-    now = datetime.now(tz_utc8).strftime("%Y-%m-%d %H:%M:%S")
-    print(f"统计时间 (UTC+8): {now}\n")
-
-    projects = ["MC", "MCPE"]
-    created_jql = "created >= -24h"
-    resolved_jql = "resolutiondate >= -24h"
-
-    results = {}
-    for proj in projects:
-        print(f"正在统计 {proj} 项目...")
-        created = get_issue_count(created_jql, project=proj)
-        resolved = get_issue_count(resolved_jql, project=proj)
-        results[proj] = (created, resolved)
-
-    print("\n正在获取最新修复的漏洞 (MC)...")
-    recent_mc = get_recently_fixed("MC", limit=10)
-    print("正在获取最新修复的漏洞 (MCPE)...")
-    recent_mcpe = get_recently_fixed("MCPE", limit=10)
-
-    print("\n=== 过去24小时统计 ===")
-    print(f"{'项目':<8} {'新增':>8} {'修复':>8}")
-    print("-" * 24)
-    display_names = {"MC": "JAVA", "MCPE": "基岩版"}
-    for proj, (c, r) in results.items():
-        c_str = str(c) if c >= 0 else "失败"
-        r_str = str(r) if r >= 0 else "失败"
-        display = display_names.get(proj, proj)
-        print(f"{display:<8} {c_str:>8} {r_str:>8}")
-
-    print("\n=== 最新修复的漏洞 (JAVA版) ===")
-    for item in recent_mc:
-        print(f"{item['key']}: {item['summary']} ({item['status']})")
-    print("\n=== 最新修复的漏洞 (基岩版) ===")
-    for item in recent_mcpe:
-        print(f"{item['key']}: {item['summary']} ({item['status']})")
-
-    xaml_content = generate_xaml(results, recent_mc, recent_mcpe, now)
-    filename = "MCBugStats.xaml"
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(xaml_content)
-    print(f"\n成功生成: {filename} (位于 {os.getcwd()})")
-
-if __name__ == "__main__":
-    main()
+</StackPanel>
