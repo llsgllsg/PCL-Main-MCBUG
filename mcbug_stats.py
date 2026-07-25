@@ -40,10 +40,7 @@ def get_issue_count(jql: str, project: str = "MC", max_retries=3) -> int:
             return -1
 
 def get_recently_fixed(project: str, limit=10, max_retries=3):
-    """
-    获取指定项目最近修复的漏洞列表。
-    使用与统计相同的查询方式：只写 resolutiondate >= -7d，不添加 ORDER BY。
-    """
+
     url = "https://bugs.mojang.com/api/jql-search-post"
     jql = "resolutiondate >= -7d"
     payload = {
@@ -79,7 +76,6 @@ def get_recently_fixed(project: str, limit=10, max_retries=3):
             else:
                 if " -7d" in jql:
                     print(f"{project}: -7d 无数据，尝试 -24h")
-                    # 重新调用，但改成 -24h（这里简单递归，但注意避免死循环）
                     return get_recently_fixed(project, limit, days="24h")  # 此参数未使用，实际修改jql
                 return []
         except Exception as e:
@@ -88,7 +84,6 @@ def get_recently_fixed(project: str, limit=10, max_retries=3):
     return []
 
 def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
-    """生成 XAML，包含统计卡片和修复列表卡片"""
     groupboxes = ""
     for proj, (created, resolved) in results.items():
         c_str = str(created) if created >= 0 else "失败"
@@ -113,7 +108,6 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
     mc_list_items = build_list_items(recent_mc)
     mcpe_list_items = build_list_items(recent_mcpe)
 
-    # GitHub SVG 路径
     github_logo = "M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.205 11.387.6.113.82-.26.82-.583 0-.288-.01-1.05-.015-2.06-3.338.726-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.468-2.381 1.236-3.221-.124-.3-.536-1.52.117-3.162 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.642.242 2.862.118 3.162.768.84 1.233 1.911 1.233 3.221 0 4.605-2.803 5.62-5.476 5.92.43.37.824 1.102.824 2.222 0 1.606-.015 2.898-.015 3.293 0 .322.216.698.83.578 4.765-1.588 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
 
     xaml = f'''<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
