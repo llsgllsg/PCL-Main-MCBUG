@@ -39,62 +39,87 @@ def get_issue_count(jql: str, project: str = "MC", max_retries=3) -> int:
             print("重试次数用尽，放弃")
             return -1
 
-def get_recent_issues(project: str, limit=10, max_retries=3):
+def get_recently_fixed(project: str, limit=10, max_retries=3):
+    """
+    分页获取所有 resolutiondate >= -7d 的 issue，按 resolutiondate 降序排序，取前 limit 个。
+    """
     url = "https://bugs.mojang.com/api/jql-search-post"
-    jql = "created is not null ORDER BY created DESC"
-    payload = {
-        "advanced": True,
-        "search": jql,
-        "maxResults": limit,
-        "project": project
-    }
+    jql = "resolutiondate >= -7d"
+    page = 0
+    page_size = 50
+    all_issues = []
 
-    for attempt in range(max_retries):
+    while True:
+        payload = {
+            "advanced": True,
+            "search": jql,
+            "maxResults": page_size,
+            "startAt": page * page_size,
+            "project": project
+        }
         try:
             resp = requests.post(url, json=payload, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             issues = data.get("issues", [])
-            if issues:
-                result = []
-                for issue in issues:
-                    key = issue.get("key")
-                    fields = issue.get("fields", {})
-                    summary = fields.get("summary", "无摘要")
-                    status = fields.get("status", {}).get("name", "未知")
-                    created = fields.get("created", "")
-                    result.append({
-                        "key": key,
-                        "summary": summary,
-                        "status": status,
-                        "created": created
-                    })
-                if result and result[0]["created"]:
-                    result.sort(key=lambda x: x["created"], reverse=True)
-                return result
-            else:
-                return []
+            if not issues:
+                break
+            all_issues.extend(issues)
+            pagination = data.get("pagination", {})
+            if not pagination.get("hasNextPage", False):
+                break
+            page += 1
         except Exception as e:
-            print(f"请求失败 (尝试 {attempt+1}/{max_retries}): {e}")
-            time.sleep(2)
-    return []
+            print(f"分页请求失败: {e}")
+            break
 
-def build_vulnerability_groupboxes(items, link_prefix, version_name):
-    if not items:
-        return '<TextBlock Text="暂无数据" Margin="10,5" />'
-    groups = ""
-    for item in items:
-        key = item["key"]
-        safe_summary = item["summary"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        status = item.get("status", "未知")
-        groups += f'''
-                <GroupBox Header="{key} - {safe_summary} ({status})" Margin="5" MinWidth="200" MinHeight="40">
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                        <local:MyButton Width="80" Height="25" ColorType="Highlight" Text="打开" EventType="打开网页" EventData="{link_prefix}{key}" />
-                    </StackPanel>
-                </GroupBox>
-'''
-    return groups
+    # 如果 -7d 无数据，尝试 -24h
+    if not all_issues:
+        print(f"{project}: -7d 无数据，尝试 -24h")
+        jql = "resolutiondate >= -24h"
+        page = 0
+        while True:
+            payload = {
+                "advanced": True,
+                "search": jql,
+                "maxResults": page_size,
+                "startAt": page * page_size,
+                "project": project
+            }
+            try:
+                resp = requests.post(url, json=payload, timeout=10)
+                resp.raise_for_status()
+                data = resp.json()
+                issues = data.get("issues", [])
+                if not issues:
+                    break
+                all_issues.extend(issues)
+                pagination = data.get("pagination", {})
+                if not pagination.get("hasNextPage", False):
+                    break
+                page += 1
+            except Exception as e:
+                print(f"回退分页请求失败: {e}")
+                break
+
+    if not all_issues:
+        return []
+
+    result = []
+    for issue in all_issues:
+        key = issue.get("key")
+        fields = issue.get("fields", {})
+        summary = fields.get("summary", "无摘要")
+        status = fields.get("status", {}).get("name", "未知")
+        resolutiondate = fields.get("resolutiondate", "")
+        result.append({
+            "key": key,
+            "summary": summary,
+            "status": status,
+            "resolutiondate": resolutiondate
+        })
+    result.sort(key=lambda x: x["resolutiondate"], reverse=True)
+    return result[:limit]
 
 def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
     display_names = {
@@ -109,11 +134,22 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
         groupboxes += f'                <GroupBox Header="{display_name} 新增" Content="{c_str}" />\n'
         groupboxes += f'                <GroupBox Header="{display_name} 修复" Content="{r_str}" />\n'
 
-    # 生成官方和镜像内容
-    mc_official = build_vulnerability_groupboxes(recent_mc, "https://bugs.mojang.com/browse/", "Java版")
-    mc_mirror   = build_vulnerability_groupboxes(recent_mc, "https://mojira.dev/browse/", "Java版")
-    mcpe_official = build_vulnerability_groupboxes(recent_mcpe, "https://bugs.mojang.com/browse/", "基岩版")
-    mcpe_mirror   = build_vulnerability_groupboxes(recent_mcpe, "https://mojira.dev/browse/", "基岩版")
+    def build_list_items(items, max_count=10):
+        if not items:
+            return f'        <local:MyListItem Margin="-5,2,-5,8" Title="暂无数据" Info="请稍后再试" Type="TextOnly" />\n'
+        lines = ""
+        count = 0
+        for item in items:
+            if count >= max_count:
+                break
+            safe_summary = item["summary"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            status = item.get("status", "未知")
+            lines += f'        <local:MyListItem Margin="-5,2,-5,8" Logo="pack://application:,,,/images/Blocks/CommandBlock.png" Title="{item["key"]}" Info="{safe_summary} ({status})" Type="Clickable" EventType="打开网页" EventData="https://bugs.mojang.com/browse/{item["key"]}" />\n'
+            count += 1
+        return lines
+
+    mc_list_items = build_list_items(recent_mc)
+    mcpe_list_items = build_list_items(recent_mcpe)
 
     github_logo = "M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.205 11.387.6.113.82-.26.82-.583 0-.288-.01-1.05-.015-2.06-3.338.726-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.468-2.381 1.236-3.221-.124-.3-.536-1.52.117-3.162 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.642.242 2.862.118 3.162.768.84 1.233 1.911 1.233 3.221 0 4.605-2.803 5.62-5.476 5.92.43.37.824 1.102.824 2.222 0 1.606-.015 2.898-.015 3.293 0 .322.216.698.83.578 4.765-1.588 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
 
@@ -138,40 +174,24 @@ def generate_xaml(results, recent_mc, recent_mcpe, timestamp):
     </local:MyCard>
 
     <local:MyCard Title="最新提交的Java版漏洞" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
-        <StackPanel Margin="25,15,23,15">
-            <local:MyHint Text="点击下方卡片内的按钮可查看详细" Theme="Blue" Margin="0,0,0,10" />
-            <WrapPanel>
-{mc_official}
-            </WrapPanel>
-            <!-- 嵌套子卡片，显示镜像源 -->
-            <local:MyCard Title="（镜像源）" Margin="0,15,0,0" CanSwap="True" IsSwapped="True">
-                <StackPanel>
-                    <WrapPanel>
-{mc_mirror}
-                    </WrapPanel>
-                </StackPanel>
-            </local:MyCard>
+        <StackPanel Margin="25,40,23,15">
+            <local:MyHint Text="点击列表项可直接跳转到对应的漏洞页面" Theme="Blue" Margin="0,0,0,10" />
+            <StackPanel>
+{mc_list_items}
+            </StackPanel>
         </StackPanel>
     </local:MyCard>
 
     <local:MyCard Title="最新提交的寄样板漏洞" Margin="0,0,0,15" CanSwap="True" IsSwapped="True">
-        <StackPanel Margin="25,15,23,15">
-            <local:MyHint Text="点击下方卡片内的按钮可查看详细" Theme="Blue" Margin="0,0,0,10" />
-            <WrapPanel>
-{mcpe_official}
-            </WrapPanel>
-            <!-- 嵌套子卡片，显示镜像源 -->
-            <local:MyCard Title="（镜像源）" Margin="0,15,0,0" CanSwap="True" IsSwapped="True">
-                <StackPanel>
-                    <WrapPanel>
-{mcpe_mirror}
-                    </WrapPanel>
-                </StackPanel>
-            </local:MyCard>
+        <StackPanel Margin="25,40,23,15">
+            <local:MyHint Text="点击列表项可直接跳转到对应的漏洞页面" Theme="Blue" Margin="0,0,0,10" />
+            <StackPanel>
+{mcpe_list_items}
+            </StackPanel>
         </StackPanel>
     </local:MyCard>
 
-    <local:MyCard Title="操作" Margin="0,0,0,15" CanSwap="False">
+    <local:MyCard Title="⚙️ 操作" Margin="0,0,0,15" CanSwap="False">
         <StackPanel Margin="25,20,23,20" HorizontalAlignment="Center" Orientation="Horizontal">
             <local:MyIconButton 
                 Width="180" 
@@ -218,10 +238,10 @@ def main():
         resolved = get_issue_count(resolved_jql, project=proj)
         results[proj] = (created, resolved)
 
-    print("\n正在获取最新提交的漏洞 (MC)...")
-    recent_mc = get_recent_issues("MC", limit=10)
-    print("正在获取最新提交的漏洞 (MCPE)...")
-    recent_mcpe = get_recent_issues("MCPE", limit=10)
+    print("\n正在获取最新修复的漏洞 (MC)...")
+    recent_mc = get_recently_fixed("MC", limit=10)
+    print("正在获取最新修复的漏洞 (MCPE)...")
+    recent_mcpe = get_recently_fixed("MCPE", limit=10)
 
     print("\n=== 过去24小时统计 ===")
     print(f"{'项目':<8} {'新增':>8} {'修复':>8}")
@@ -233,10 +253,10 @@ def main():
         display = display_names.get(proj, proj)
         print(f"{display:<8} {c_str:>8} {r_str:>8}")
 
-    print("\n=== 最新提交的漏洞 (JAVA版) ===")
+    print("\n=== 最新修复的漏洞 (JAVA版) ===")
     for item in recent_mc:
         print(f"{item['key']}: {item['summary']} ({item['status']})")
-    print("\n=== 最新提交的漏洞 (基岩版) ===")
+    print("\n=== 最新修复的漏洞 (基岩版) ===")
     for item in recent_mcpe:
         print(f"{item['key']}: {item['summary']} ({item['status']})")
 
