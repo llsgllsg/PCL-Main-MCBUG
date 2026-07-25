@@ -2,8 +2,8 @@ name: Update MC Bug Stats
 
 on:
   schedule:
-    - cron: '0 * * * *'      # 每小时整点执行一次
-  workflow_dispatch:          # 手动触发
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   update:
@@ -43,20 +43,27 @@ jobs:
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             "mkdir -p ${{ secrets.SERVER_PATH }}"
 
-      - name: 上传到服务器
+      - name: 上传 XAML 文件
         run: |
-          # 重试一次
           for i in 1 2; do
-            echo "尝试上传 (第 $i 次)"
+            echo "尝试上传 XAML (第 $i 次)"
             if sshpass -p '${{ secrets.SSH_PASSWORD }}' scp -o StrictHostKeyChecking=no -P ${{ secrets.SERVER_PORT || 22 }} \
                 MCBugStats.xaml \
-                ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.SERVER_PATH }}/MCBugStats.xaml; then
-              echo "✅ 上传成功"
+                ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.SERVER_PATH }}/; then
+              echo "XAML 上传成功"
               exit 0
             else
-              echo "❌ 上传失败，等待重试..."
+              echo "上传失败，等待重试..."
               sleep 5
             fi
           done
-          echo "❌ 上传失败，放弃"
+          echo "上传失败，放弃"
           exit 1
+
+      - name: 在远程创建/覆盖版本号文件 MCBugStats.xaml.ini
+        run: |
+          TIMESTAMP=$(date -u +%s)
+          sshpass -p '${{ secrets.SSH_PASSWORD }}' ssh -o StrictHostKeyChecking=no -p ${{ secrets.SERVER_PORT || 22 }} \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "echo $TIMESTAMP > ${{ secrets.SERVER_PATH }}/MCBugStats.xaml.ini"
+          echo "版本号已更新: $TIMESTAMP"
