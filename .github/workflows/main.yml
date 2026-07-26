@@ -27,10 +27,10 @@ jobs:
       - name: 检查生成的文件
         run: |
           if [ -f "MCBugStats.xaml" ]; then
-            echo "✅ 文件已生成"
+            echo "文件已生成"
             ls -la MCBugStats.xaml
           else
-            echo "❌ 文件未生成，请检查脚本"
+            echo "文件未生成，请检查脚本"
             exit 1
           fi
 
